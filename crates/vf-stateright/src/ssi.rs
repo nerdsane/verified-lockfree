@@ -508,6 +508,271 @@ impl SsiState {
     }
 }
 
+// ============================================================================
+// ORACLE EXTRACTION
+// ============================================================================
+
+/// Categories of interesting SSI scenarios for testing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum SsiOracleCategory {
+    /// Two transactions successfully commit writes to different keys
+    ConcurrentCommit,
+    /// Write-write conflict detected and one aborts
+    WriteWriteConflict,
+    /// Read-write conflict creates dangerous structure
+    DangerousStructure,
+    /// Transaction aborts due to serializability violation
+    SerializabilityAbort,
+    /// Successful commit after conflict detection (no dangerous structure)
+    CommitWithConflict,
+    /// Deadlock avoidance scenario
+    DeadlockAvoidance,
+}
+
+/// An oracle capturing an interesting SSI execution.
+#[derive(Debug, Clone)]
+pub struct SsiOracle {
+    pub name: String,
+    pub category: SsiOracleCategory,
+    pub actions: Vec<SsiAction>,
+    pub description: String,
+}
+
+impl SsiOracle {
+    /// Pre-built oracle: Write-write conflict
+    ///
+    /// T1 writes and commits, then T2 starts (serial execution).
+    /// Shows that sequential writes to same key are allowed.
+    pub fn write_write_conflict() -> Self {
+        Self {
+            name: "write_write_sequential".into(),
+            category: SsiOracleCategory::ConcurrentCommit, // Actually serial, both commit
+            actions: vec![
+                SsiAction::Begin(1),
+                SsiAction::Write(1, 1), // T1 writes K1
+                SsiAction::Commit(1),   // T1 commits
+                SsiAction::Begin(2),    // T2 starts AFTER T1 commits (serial)
+                SsiAction::Write(2, 1), // T2 writes K1
+                SsiAction::Commit(2),   // T2 commits (serial execution)
+            ],
+            description: "Sequential writes to same key - T2 starts after T1 commits".into(),
+        }
+    }
+
+    /// Pre-built oracle: Dangerous structure detection
+    ///
+    /// Classic write skew setup that SSI must prevent.
+    pub fn dangerous_structure() -> Self {
+        Self {
+            name: "dangerous_structure".into(),
+            category: SsiOracleCategory::DangerousStructure,
+            actions: vec![
+                SsiAction::Begin(1),
+                SsiAction::Begin(2),
+                SsiAction::Read(1, 1),  // T1 reads K1
+                SsiAction::Read(2, 2),  // T2 reads K2
+                SsiAction::Write(1, 2), // T1 writes K2 (conflict with T2's read)
+                SsiAction::Write(2, 1), // T2 writes K1 (conflict with T1's read)
+                // Now both have in_conflict AND out_conflict = dangerous structure
+                // Commit attempts should fail
+                SsiAction::Commit(1), // Should abort due to dangerous structure
+            ],
+            description: "Write skew pattern - both txns have dangerous structure".into(),
+        }
+    }
+
+    /// Pre-built oracle: Safe concurrent operations
+    ///
+    /// Two transactions on disjoint keys - should both commit.
+    pub fn disjoint_keys() -> Self {
+        Self {
+            name: "disjoint_keys".into(),
+            category: SsiOracleCategory::ConcurrentCommit,
+            actions: vec![
+                SsiAction::Begin(1),
+                SsiAction::Begin(2),
+                SsiAction::Write(1, 1), // T1 writes K1
+                SsiAction::Write(2, 2), // T2 writes K2 (different key)
+                SsiAction::Commit(1),
+                SsiAction::Commit(2),
+            ],
+            description: "Concurrent writes to different keys - both commit".into(),
+        }
+    }
+
+    /// Pre-built oracle: Read-only transaction
+    ///
+    /// Read-only transactions never conflict.
+    pub fn read_only() -> Self {
+        Self {
+            name: "read_only".into(),
+            category: SsiOracleCategory::ConcurrentCommit,
+            actions: vec![
+                SsiAction::Begin(1),
+                SsiAction::Write(1, 1),
+                SsiAction::Commit(1),
+                SsiAction::Begin(2),
+                SsiAction::Read(2, 1), // T2 reads T1's write
+                SsiAction::Commit(2),
+            ],
+            description: "Read-only transaction sees committed write".into(),
+        }
+    }
+
+    /// Pre-built oracle: Commit with single conflict flag
+    ///
+    /// Having only in_conflict OR out_conflict is safe.
+    pub fn single_conflict_flag() -> Self {
+        Self {
+            name: "single_conflict_flag".into(),
+            category: SsiOracleCategory::CommitWithConflict,
+            actions: vec![
+                SsiAction::Begin(1),
+                SsiAction::Begin(2),
+                SsiAction::Read(1, 1),  // T1 reads K1
+                SsiAction::Write(2, 1), // T2 writes K1 (T1 gets out_conflict)
+                SsiAction::Commit(2),   // T2 commits
+                SsiAction::Commit(1),   // T1 can commit (only out_conflict, no in_conflict)
+            ],
+            description: "Transaction commits with only out_conflict set".into(),
+        }
+    }
+
+    /// Pre-built oracle: Concurrent write attempt blocked
+    ///
+    /// T2 cannot write while T1 holds the lock.
+    pub fn concurrent_write_blocked() -> Self {
+        Self {
+            name: "concurrent_write_blocked".into(),
+            category: SsiOracleCategory::WriteWriteConflict,
+            actions: vec![
+                SsiAction::Begin(1),
+                SsiAction::Begin(2),
+                SsiAction::Write(1, 1), // T1 writes K1, holds lock
+                // T2's write to K1 would fail (lock held)
+                SsiAction::Write(2, 2), // T2 writes K2 instead (different key)
+                SsiAction::Commit(1),
+                SsiAction::Commit(2),
+            ],
+            description: "T2 cannot write K1 while T1 holds lock, writes K2 instead".into(),
+        }
+    }
+
+    /// All pre-built SSI oracles.
+    pub fn all_oracles() -> Vec<Self> {
+        vec![
+            Self::write_write_conflict(),
+            Self::concurrent_write_blocked(),
+            Self::dangerous_structure(),
+            Self::disjoint_keys(),
+            Self::read_only(),
+            Self::single_conflict_flag(),
+        ]
+    }
+}
+
+/// Extract oracles by running the state machine and finding interesting paths.
+pub struct SsiOracleExtractor {
+    pub oracles: Vec<SsiOracle>,
+    max_depth: usize,
+}
+
+impl SsiOracleExtractor {
+    pub fn new(max_depth: usize) -> Self {
+        Self {
+            oracles: Vec::new(),
+            max_depth,
+        }
+    }
+
+    /// Extract oracles by exploring the state space.
+    pub fn extract(&mut self, txns: &[TxnId], keys: &[KeyId]) -> Vec<SsiOracle> {
+        let initial = SsiState::new(txns, keys);
+        let mut visited = std::collections::HashSet::new();
+        let mut interesting = Vec::new();
+
+        self.explore(initial, Vec::new(), &mut visited, &mut interesting, 0);
+
+        // Also include pre-built oracles
+        let mut result = SsiOracle::all_oracles();
+        result.extend(interesting);
+        result
+    }
+
+    fn explore(
+        &self,
+        state: SsiState,
+        path: Vec<SsiAction>,
+        visited: &mut std::collections::HashSet<SsiState>,
+        interesting: &mut Vec<SsiOracle>,
+        depth: usize,
+    ) {
+        if depth >= self.max_depth {
+            return;
+        }
+
+        if !visited.insert(state.clone()) {
+            return;
+        }
+
+        // Check if this state is interesting
+        self.check_interesting(&state, &path, interesting);
+
+        // Explore successors
+        for action in state.possible_actions() {
+            if let Some(next) = state.apply(&action) {
+                let mut new_path = path.clone();
+                new_path.push(action);
+                self.explore(next, new_path, visited, interesting, depth + 1);
+            }
+        }
+    }
+
+    fn check_interesting(
+        &self,
+        state: &SsiState,
+        path: &[SsiAction],
+        interesting: &mut Vec<SsiOracle>,
+    ) {
+        // Check for dangerous structure that was aborted
+        for (&txn, &status) in &state.txn_status {
+            if status == TxnStatus::Aborted {
+                // Check if it was aborted due to dangerous structure
+                for op in &state.history {
+                    if let Operation::Abort { txn: t, reason } = op {
+                        if *t == txn && *reason == AbortReason::DangerousStructure {
+                            interesting.push(SsiOracle {
+                                name: format!("dangerous_abort_t{}", txn),
+                                category: SsiOracleCategory::SerializabilityAbort,
+                                actions: path.to_vec(),
+                                description: format!("T{} aborted due to dangerous structure", txn),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check for successful commit with conflict flags
+        for &txn in &state.committed_txns() {
+            let in_c = state.in_conflict.get(&txn).copied().unwrap_or(false);
+            let out_c = state.out_conflict.get(&txn).copied().unwrap_or(false);
+
+            if in_c || out_c {
+                interesting.push(SsiOracle {
+                    name: format!("commit_with_conflict_t{}", txn),
+                    category: SsiOracleCategory::CommitWithConflict,
+                    actions: path.to_vec(),
+                    description: format!(
+                        "T{} committed with in_conflict={}, out_conflict={}",
+                        txn, in_c, out_c
+                    ),
+                });
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

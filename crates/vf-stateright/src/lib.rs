@@ -38,6 +38,6 @@ pub mod treiber_stack;
 pub mod verifier;
 
 pub use oracle::{Oracle, OracleAction, OracleActionType, OracleCategory, OracleExtractor};
-pub use ssi::{SsiAction, SsiState, TxnId, TxnStatus};
+pub use ssi::{SsiAction, SsiOracle, SsiOracleCategory, SsiOracleExtractor, SsiState, TxnId, TxnStatus};
 pub use treiber_stack::{StackAction, StackModel, StackState};
 pub use verifier::{VerifiableStack, VerificationResult, VerifierConfig, verify_implementation};
