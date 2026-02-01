@@ -1,6 +1,6 @@
 [package]
-name = "vf-evaluators"
-description = "Evaluator cascade for verified lock-free structures"
+name = "vf-generator"
+description = "LLM-powered code generation with spec-guided verification"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,15 +8,19 @@ rust-version.workspace = true
 
 [dependencies]
 vf-core.workspace = true
-vf-dst.workspace = true
+vf-evaluators.workspace = true
 
 thiserror.workspace = true
 tokio = { workspace = true, features = ["process", "time", "fs", "io-util", "rt-multi-thread", "macros"] }
 serde.workspace = true
 serde_json.workspace = true
 rand.workspace = true
-stateright.workspace = true
-num_cpus.workspace = true
-tempfile.workspace = true
+
+# HTTP client for Claude API
+reqwest = { version = "0.11", features = ["json", "rustls-tls"] }
 
 [dev-dependencies]
+
+[[bin]]
+name = "vf-generate"
+path = "src/bin/generate.rs"

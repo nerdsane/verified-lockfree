@@ -15,6 +15,8 @@
 pub mod counterexample;
 pub mod invariants;
 pub mod property;
+pub mod tla_spec;
 
 pub use counterexample::{Counterexample, MemoryIssue, StateSnapshot, ThreadAction};
 pub use property::{PropertyChecker, PropertyResult};
+pub use tla_spec::{ParseError, TlaInvariant, TlaSpec};

@@ -81,6 +81,21 @@ impl EvaluatorResult {
         }
     }
 
+    /// Create a skipped result (tool not available).
+    ///
+    /// Skipped results count as passed since the tool couldn't run.
+    /// This allows the cascade to continue when optional tools aren't installed.
+    pub fn skip(evaluator: impl Into<String>, reason: impl Into<String>, duration: Duration) -> Self {
+        Self {
+            evaluator: evaluator.into(),
+            passed: true, // Skip counts as pass
+            error: None,
+            counterexample: None,
+            duration,
+            output: format!("SKIPPED: {}", reason.into()),
+        }
+    }
+
     /// Format as a single-line status.
     pub fn format_status(&self) -> String {
         if self.passed {

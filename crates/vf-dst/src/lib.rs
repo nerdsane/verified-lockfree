@@ -38,12 +38,24 @@
 pub mod clock;
 pub mod env;
 pub mod fault;
+pub mod fault_injection;
+pub mod harness;
+pub mod loom_oracle;
+pub mod oracle_scheduler;
 pub mod random;
 pub mod scheduler;
+
+// Deprecated - violates "code is disposable" principle
+#[doc(hidden)]
+pub mod instrumented;
 
 pub use clock::SimClock;
 pub use env::DstEnv;
 pub use fault::{FaultConfig, FaultInjector};
+pub use fault_injection::{DstRunner, DstTestableStack, DstOp, FaultPoint, FaultType, run_dst_scenario};
+pub use harness::{DstHarness, HarnessConfig, HarnessResult};
+pub use loom_oracle::{LoomScenario, LoomOp, LoomTestableStack, generate_loom_test};
+pub use oracle_scheduler::{OracleScheduler, OracleSchedulerStats, OracleTrace};
 pub use random::DeterministicRng;
 pub use scheduler::{ScheduleDecision, Scheduler};
 

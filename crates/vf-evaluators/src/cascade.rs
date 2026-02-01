@@ -9,6 +9,9 @@ use crate::level0_rustc;
 use crate::level1_miri;
 use crate::level2_loom;
 use crate::level3_dst;
+use crate::level4_stateright;
+use crate::level5_kani;
+use crate::level6_verus;
 use crate::result::{CascadeResult, EvaluatorResult};
 
 /// Evaluator levels in the cascade.
@@ -27,6 +30,8 @@ pub enum EvaluatorLevel {
     Stateright = 4,
     /// Level 5: kani - bounded model checking / proof
     Kani = 5,
+    /// Level 6: verus - SMT-based theorem proving (proofs for ALL inputs)
+    Verus = 6,
 }
 
 impl EvaluatorLevel {
@@ -41,6 +46,7 @@ impl EvaluatorLevel {
                 3 => EvaluatorLevel::Dst,
                 4 => EvaluatorLevel::Stateright,
                 5 => EvaluatorLevel::Kani,
+                6 => EvaluatorLevel::Verus,
                 _ => unreachable!(),
             })
             .collect()
@@ -55,6 +61,7 @@ impl EvaluatorLevel {
             EvaluatorLevel::Dst => "DST",
             EvaluatorLevel::Stateright => "stateright",
             EvaluatorLevel::Kani => "kani",
+            EvaluatorLevel::Verus => "verus",
         }
     }
 }
@@ -78,6 +85,8 @@ pub struct CascadeConfig {
     pub dst_seed: Option<u64>,
     /// Number of DST iterations
     pub dst_iterations: u64,
+    /// Verus thread count
+    pub verus_threads: usize,
 }
 
 impl Default for CascadeConfig {
@@ -91,6 +100,7 @@ impl Default for CascadeConfig {
             kani_unwind: 10,
             dst_seed: None,
             dst_iterations: 1000,
+            verus_threads: num_cpus::get(),
         }
     }
 }
@@ -127,6 +137,23 @@ impl CascadeConfig {
             stateright_depth_max: 500,
             kani_unwind: 20,
             dst_iterations: 100000,
+            ..Default::default()
+        }
+    }
+
+    /// Formal verification (includes Verus SMT proofs).
+    ///
+    /// This goes beyond bounded model checking to prove properties
+    /// for ALL inputs, not just explored states.
+    pub fn formal() -> Self {
+        Self {
+            max_level: EvaluatorLevel::Verus,
+            timeout: Duration::from_secs(3600), // 1 hour
+            loom_preemption_bound: 5,
+            stateright_depth_max: 500,
+            kani_unwind: 20,
+            dst_iterations: 100000,
+            verus_threads: num_cpus::get(),
             ..Default::default()
         }
     }
@@ -176,12 +203,34 @@ impl EvaluatorCascade {
                     .await
                 }
                 EvaluatorLevel::Stateright => {
-                    // TODO: Implement stateright evaluator
-                    EvaluatorResult::pass("stateright", Duration::ZERO)
+                    level4_stateright::run(
+                        crate_path,
+                        self.config.timeout,
+                        self.config.stateright_depth_max,
+                    )
+                    .await
                 }
                 EvaluatorLevel::Kani => {
-                    // TODO: Implement kani evaluator
-                    EvaluatorResult::pass("kani", Duration::ZERO)
+                    level5_kani::run(crate_path, self.config.timeout, self.config.kani_unwind).await
+                }
+                EvaluatorLevel::Verus => {
+                    let verus_config = level6_verus::VerusConfig {
+                        timeout: self.config.timeout,
+                        threads: self.config.verus_threads,
+                        ..Default::default()
+                    };
+                    // Look for verus proof files (*.verus.rs or verify.rs)
+                    let verus_file = crate_path.join("src").join("verify.rs");
+                    if verus_file.exists() {
+                        level6_verus::run(&verus_file, &verus_config).await
+                    } else {
+                        // Skip if no verus file present
+                        EvaluatorResult::skip(
+                            "verus",
+                            "No Verus proof file found (src/verify.rs)",
+                            Duration::ZERO,
+                        )
+                    }
                 }
             };
 
@@ -277,6 +326,11 @@ mod tests {
         assert_eq!(levels[0], EvaluatorLevel::Rustc);
         assert_eq!(levels[1], EvaluatorLevel::Miri);
         assert_eq!(levels[2], EvaluatorLevel::Loom);
+
+        // Test all levels including Verus
+        let all_levels = EvaluatorLevel::Verus.levels_up_to();
+        assert_eq!(all_levels.len(), 7);
+        assert_eq!(all_levels[6], EvaluatorLevel::Verus);
     }
 
     #[test]
@@ -289,5 +343,19 @@ mod tests {
 
         let max = CascadeConfig::maximum();
         assert_eq!(max.max_level, EvaluatorLevel::Kani);
+
+        let formal = CascadeConfig::formal();
+        assert_eq!(formal.max_level, EvaluatorLevel::Verus);
+    }
+
+    #[test]
+    fn test_level_names() {
+        assert_eq!(EvaluatorLevel::Rustc.name(), "rustc");
+        assert_eq!(EvaluatorLevel::Miri.name(), "miri");
+        assert_eq!(EvaluatorLevel::Loom.name(), "loom");
+        assert_eq!(EvaluatorLevel::Dst.name(), "DST");
+        assert_eq!(EvaluatorLevel::Stateright.name(), "stateright");
+        assert_eq!(EvaluatorLevel::Kani.name(), "kani");
+        assert_eq!(EvaluatorLevel::Verus.name(), "verus");
     }
 }

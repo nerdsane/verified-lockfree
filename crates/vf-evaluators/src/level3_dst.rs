@@ -1,6 +1,12 @@
 //! Level 3: DST evaluator.
 //!
 //! Runs Deterministic Simulation Testing with fault injection.
+//!
+//! DST tests are characterized by:
+//! - Reproducible via seed (DST_SEED environment variable)
+//! - Deterministic scheduling of concurrent operations
+//! - Fault injection (delays, failures)
+//! - Invariant checking at configurable intervals
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -9,6 +15,59 @@ use tokio::process::Command;
 use vf_core::Counterexample;
 
 use crate::result::EvaluatorResult;
+
+/// DST configuration.
+#[derive(Debug, Clone)]
+pub struct DstConfig {
+    /// Seed for reproducibility (None = random)
+    pub seed: Option<u64>,
+    /// Number of iterations
+    pub iterations: u64,
+    /// Timeout per test
+    pub timeout: Duration,
+    /// Test filter (regex pattern)
+    pub filter: Option<String>,
+}
+
+impl Default for DstConfig {
+    fn default() -> Self {
+        Self {
+            seed: None,
+            iterations: 1000,
+            timeout: Duration::from_secs(60),
+            filter: None,
+        }
+    }
+}
+
+impl DstConfig {
+    /// Quick config for fast testing.
+    pub fn quick() -> Self {
+        Self {
+            iterations: 100,
+            timeout: Duration::from_secs(10),
+            ..Default::default()
+        }
+    }
+
+    /// Thorough config for CI.
+    pub fn thorough() -> Self {
+        Self {
+            iterations: 10000,
+            timeout: Duration::from_secs(300),
+            ..Default::default()
+        }
+    }
+
+    /// Stress config for finding rare bugs.
+    pub fn stress() -> Self {
+        Self {
+            iterations: 100000,
+            timeout: Duration::from_secs(600),
+            ..Default::default()
+        }
+    }
+}
 
 /// Run DST tests on a crate.
 ///
@@ -19,22 +78,42 @@ pub async fn run(
     seed: Option<u64>,
     iterations: u64,
 ) -> EvaluatorResult {
+    run_with_config(crate_path, DstConfig {
+        seed,
+        iterations,
+        timeout,
+        filter: None,
+    }).await
+}
+
+/// Run DST tests with full configuration.
+pub async fn run_with_config(crate_path: &Path, config: DstConfig) -> EvaluatorResult {
     let start = Instant::now();
 
     // Build the test command
     let mut cmd = Command::new("cargo");
-    cmd.args(["test", "--release", "--", "--test-threads=1"]);
+    cmd.args(["test", "--release"]);
+
+    // Add filter if specified
+    if let Some(ref filter) = config.filter {
+        cmd.arg(filter);
+    }
+
+    // Run tests sequentially for determinism
+    cmd.arg("--");
+    cmd.arg("--test-threads=1");
+
     cmd.current_dir(crate_path);
 
     // Set DST seed if provided
-    if let Some(s) = seed {
+    if let Some(s) = config.seed {
         cmd.env("DST_SEED", s.to_string());
     }
 
     // Set iterations
-    cmd.env("DST_ITERATIONS", iterations.to_string());
+    cmd.env("DST_ITERATIONS", config.iterations.to_string());
 
-    let result = tokio::time::timeout(timeout, cmd.output()).await;
+    let result = tokio::time::timeout(config.timeout, cmd.output()).await;
 
     let duration = start.elapsed();
 
@@ -45,7 +124,13 @@ pub async fn run(
             let combined = format!("{}\n{}", stdout, stderr);
 
             if output.status.success() {
-                EvaluatorResult::pass_with_output("DST", duration, combined)
+                // Extract DST stats from output
+                let stats = extract_dst_stats(&combined);
+                EvaluatorResult::pass_with_output(
+                    "DST",
+                    duration,
+                    format!("{}\n{}", stats, combined),
+                )
             } else {
                 let (error, counterexample) = extract_dst_error(&stderr, &stdout);
                 if let Some(ce) = counterexample {
@@ -63,10 +148,87 @@ pub async fn run(
         ),
         Err(_) => EvaluatorResult::fail(
             "DST",
-            format!("Timeout after {:?}", timeout),
+            format!("Timeout after {:?}", config.timeout),
             duration,
             String::new(),
         ),
+    }
+}
+
+/// Run DST tests directly in-process (for testing the evaluator itself).
+pub fn run_inline<F, E>(seed: u64, iterations: u64, mut test_fn: F) -> InlineResult
+where
+    F: FnMut(u64) -> Result<(), E>,
+    E: std::fmt::Display,
+{
+    let start = Instant::now();
+
+    for i in 0..iterations {
+        if let Err(e) = test_fn(i) {
+            return InlineResult {
+                passed: false,
+                seed,
+                iterations_completed: i,
+                error: Some(format!("{}", e)),
+                duration: start.elapsed(),
+            };
+        }
+    }
+
+    InlineResult {
+        passed: true,
+        seed,
+        iterations_completed: iterations,
+        error: None,
+        duration: start.elapsed(),
+    }
+}
+
+/// Result from inline DST testing.
+#[derive(Debug, Clone)]
+pub struct InlineResult {
+    pub passed: bool,
+    pub seed: u64,
+    pub iterations_completed: u64,
+    pub error: Option<String>,
+    pub duration: Duration,
+}
+
+impl InlineResult {
+    pub fn format(&self) -> String {
+        if self.passed {
+            format!(
+                "[PASS] DST_SEED={} iterations={} ({:.2}s)",
+                self.seed,
+                self.iterations_completed,
+                self.duration.as_secs_f64()
+            )
+        } else {
+            format!(
+                "[FAIL] DST_SEED={} iterations={} ({:.2}s): {}",
+                self.seed,
+                self.iterations_completed,
+                self.duration.as_secs_f64(),
+                self.error.as_deref().unwrap_or("unknown")
+            )
+        }
+    }
+}
+
+/// Extract DST statistics from output.
+fn extract_dst_stats(output: &str) -> String {
+    let mut stats = Vec::new();
+
+    for line in output.lines() {
+        if line.contains("DST completed:") || line.contains("DST_SEED=") {
+            stats.push(line.trim().to_string());
+        }
+    }
+
+    if stats.is_empty() {
+        "No DST stats found in output".to_string()
+    } else {
+        stats.join("\n")
     }
 }
 
@@ -80,6 +242,8 @@ fn extract_dst_error(stderr: &str, stdout: &str) -> (String, Option<Counterexamp
         if line.contains("DST_SEED=") {
             if let Some(seed_str) = line.split("DST_SEED=").nth(1) {
                 if let Some(num_str) = seed_str.split_whitespace().next() {
+                    // Handle both "12345" and "12345 (randomly generated)"
+                    let num_str = num_str.trim_end_matches(|c: char| !c.is_ascii_digit());
                     if let Ok(s) = num_str.parse::<u64>() {
                         seed = Some(s);
                     }
@@ -88,8 +252,12 @@ fn extract_dst_error(stderr: &str, stdout: &str) -> (String, Option<Counterexamp
         }
 
         // Look for panic message
-        if line.contains("panicked at") || line.contains("assertion failed") {
+        if line.contains("panicked at") {
             error = line.to_string();
+        } else if line.contains("assertion failed") || line.contains("Invariant violated") {
+            if error.is_empty() {
+                error = line.to_string();
+            }
         }
     }
 
@@ -119,5 +287,51 @@ test test_stack_under_faults ... FAILED
         assert!(error.contains("panicked") || error.contains("assertion failed"));
         assert!(ce.is_some());
         assert_eq!(ce.unwrap().dst_seed, Some(12345));
+    }
+
+    #[test]
+    fn test_extract_dst_stats() {
+        let output = r#"
+running 1 test
+DST_SEED=42 (from environment)
+DST completed: elapsed=100ms rng_calls=500 faults=10
+test test_foo ... ok
+"#;
+        let stats = extract_dst_stats(output);
+        assert!(stats.contains("DST_SEED=42"));
+        assert!(stats.contains("DST completed"));
+    }
+
+    #[test]
+    fn test_run_inline_pass() {
+        let result = run_inline(12345, 100, |_i| Ok::<(), &str>(()));
+        assert!(result.passed);
+        assert_eq!(result.iterations_completed, 100);
+    }
+
+    #[test]
+    fn test_run_inline_fail() {
+        let result = run_inline(12345, 100, |i| {
+            if i == 50 {
+                Err("Failed at iteration 50")
+            } else {
+                Ok(())
+            }
+        });
+        assert!(!result.passed);
+        assert_eq!(result.iterations_completed, 50);
+        assert!(result.error.as_ref().unwrap().contains("50"));
+    }
+
+    #[test]
+    fn test_config_presets() {
+        let quick = DstConfig::quick();
+        assert_eq!(quick.iterations, 100);
+
+        let thorough = DstConfig::thorough();
+        assert_eq!(thorough.iterations, 10000);
+
+        let stress = DstConfig::stress();
+        assert_eq!(stress.iterations, 100000);
     }
 }

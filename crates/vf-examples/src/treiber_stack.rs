@@ -212,10 +212,11 @@ impl TreiberStack<u64> {
     }
 
     /// Get current contents for verification.
+    /// Get the current contents of the stack as a vector.
     ///
     /// Note: This is not thread-safe for concurrent access.
     /// Use only in single-threaded testing or when stack is quiescent.
-    fn get_contents(&self) -> Vec<u64> {
+    pub fn get_contents(&self) -> Vec<u64> {
         let guard = epoch::pin();
         let mut result = Vec::new();
         let mut current = self.head.load(Ordering::Acquire, &guard);

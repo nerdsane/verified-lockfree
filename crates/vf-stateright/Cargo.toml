@@ -14,3 +14,4 @@ thiserror.workspace = true
 
 [dev-dependencies]
 num_cpus = "1.16"
+vf-dst.workspace = true
