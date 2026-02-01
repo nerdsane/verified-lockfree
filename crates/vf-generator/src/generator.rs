@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use vf_core::TlaSpec;
 use vf_evaluators::{CascadeConfig, CascadeResult, EvaluatorCascade, EvaluatorLevel};
+use vf_perf::{analyze_progress_guarantee, ProgressGuarantee};
 
 use crate::client::{ClaudeClient, ClientError, Message};
 use crate::prompt::{extract_code_block, PromptBuilder, SpecType};

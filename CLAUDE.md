@@ -21,6 +21,48 @@ Both **lock-free** and **lock-based** concurrent systems:
 2. **Three pillars**: Correctness + Quality + Performance
 3. **DST is core** - Deterministic Simulation Testing catches most issues
 4. **TigerStyle is mandatory** - Not optional guidelines, required rules
+5. **Unix philosophy** - Small, composable tools with single responsibility
+
+## Unix Philosophy / Separation of Concerns
+
+**Each crate owns its domain. Don't duplicate logic across crates.**
+
+| Crate | Owns | Does NOT Own |
+|-------|------|--------------|
+| vf-core | Invariants, counterexamples, property types | Verification execution |
+| vf-dst | Simulation environment (clock, RNG, faults) | Invariant definitions |
+| vf-evaluators | Running tools, parsing output, cascade orchestration | Analysis algorithms |
+| vf-perf | Progress guarantee detection, performance analysis | Code generation |
+| vf-quality | TigerStyle checking, code quality rules | Performance metrics |
+| vf-generator | Prompts, LLM calls, output parsing | Analysis of generated code |
+
+**The Rule**: If crate A needs functionality from domain B, import and call crate B. Never duplicate B's logic into A.
+
+**Example - Performance Analysis**:
+```rust
+// WRONG: Generator duplicates perf analysis logic
+// vf-generator/src/lib.rs
+fn analyze_progress(code: &str) -> ProgressGuarantee {
+    // ... 50 lines of analysis logic that belongs in vf-perf
+}
+
+// RIGHT: Generator calls vf-perf
+// vf-generator/src/lib.rs
+use vf_perf::analyze_progress_guarantee;
+
+fn report_performance(code: &str) -> String {
+    let guarantee = analyze_progress_guarantee(code);  // vf-perf owns this
+    format!("Progress guarantee: {:?}", guarantee)
+}
+```
+
+**Compose, don't absorb**: Build pipelines of small tools rather than monolithic crates.
+
+```
+TLA+ Spec → vf-generator (prompts) → Claude → vf-evaluators (cascade) → vf-perf (analysis) → Report
+              │                                      │                       │
+              └─ owns prompts                        └─ owns cascade         └─ owns metrics
+```
 
 ## The Verification Pyramid
 
@@ -191,6 +233,8 @@ cargo run -p vf-evaluators -- cascade crates/vf-examples/src/treiber_stack.rs
 | Unbounded data structures | Always have `_MAX` constants |
 | SSI: forgetting SIREAD locks persist | Locks survive commit for conflict detection |
 | SSI: checking only one conflict flag | Dangerous structure needs BOTH flags |
+| Duplicating logic across crates | **Import and call** the owning crate, don't copy-paste |
+| Putting analysis code in generator | Analysis belongs in vf-perf/vf-quality, generator just calls them |
 
 ## References
 

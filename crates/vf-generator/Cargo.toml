@@ -9,6 +9,7 @@ rust-version.workspace = true
 [dependencies]
 vf-core.workspace = true
 vf-evaluators.workspace = true
+vf-perf.workspace = true
 
 thiserror.workspace = true
 tokio = { workspace = true, features = ["process", "time", "fs", "io-util", "rt-multi-thread", "macros"] }

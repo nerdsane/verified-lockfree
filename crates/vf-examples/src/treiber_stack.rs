@@ -523,7 +523,7 @@ mod tests {
         for i in 0..4 {
             let s = Arc::clone(&stack);
             push_handles.push(thread::spawn(move || {
-                for j in 0..100 {
+                for j in 1..=100 {
                     s.push(i * 1000 + j);
                 }
             }));
