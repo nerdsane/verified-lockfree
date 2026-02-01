@@ -1,10 +1,15 @@
 //! # vf-dst
 //!
-//! Deterministic Simulation Testing framework for verified lock-free structures.
+//! Deterministic Simulation Testing framework for verified concurrent structures.
 //!
 //! Inspired by FoundationDB and TigerBeetle, this crate provides deterministic
 //! simulation of time, randomness, and faults. All behavior is reproducible
 //! via a seed.
+//!
+//! ## Harnesses
+//!
+//! - `fault_injection`: Lock-free structures (Treiber Stack)
+//! - `ssi_harness`: Lock-based protocols (SSI transactions)
 //!
 //! ## Usage
 //!
@@ -44,6 +49,8 @@ pub mod loom_oracle;
 pub mod oracle_scheduler;
 pub mod random;
 pub mod scheduler;
+pub mod ssi_harness;
+pub mod ssi_oracle;
 
 // Deprecated - violates "code is disposable" principle
 #[doc(hidden)]
@@ -58,6 +65,8 @@ pub use loom_oracle::{LoomScenario, LoomOp, LoomTestableStack, generate_loom_tes
 pub use oracle_scheduler::{OracleScheduler, OracleSchedulerStats, OracleTrace};
 pub use random::DeterministicRng;
 pub use scheduler::{ScheduleDecision, Scheduler};
+pub use ssi_harness::{DstTestableSsi, SsiDstRunner, SsiDstStats, SsiFaultPoint, SsiFaultType, DstSsiOp, run_ssi_scenario};
+pub use ssi_oracle::{SsiOracleTrace, SsiOracleAction, SsiExpectedOutcome, SsiOracleReplayResult, replay_ssi_oracle, run_all_ssi_oracles};
 
 /// Get DST seed from environment or generate random one.
 ///

@@ -9,7 +9,7 @@ use vf_core::TlaSpec;
 use vf_evaluators::{CascadeConfig, CascadeResult, EvaluatorCascade, EvaluatorLevel};
 
 use crate::client::{ClaudeClient, ClientError, Message};
-use crate::prompt::{extract_code_block, PromptBuilder};
+use crate::prompt::{extract_code_block, PromptBuilder, SpecType};
 
 /// Generator configuration.
 #[derive(Debug, Clone)]
@@ -128,18 +128,13 @@ impl GeneratorResult {
 /// LLM-powered code generator with verification.
 pub struct CodeGenerator {
     client: ClaudeClient,
-    prompt_builder: PromptBuilder,
     config: GeneratorConfig,
 }
 
 impl CodeGenerator {
     /// Create a new generator with the given client and config.
     pub fn new(client: ClaudeClient, config: GeneratorConfig) -> Self {
-        Self {
-            client,
-            prompt_builder: PromptBuilder::new(),
-            config,
-        }
+        Self { client, config }
     }
 
     /// Create from environment variables.
@@ -162,8 +157,13 @@ impl CodeGenerator {
         let mut attempt_history = Vec::new();
         let mut current_code: Option<String> = None;
 
+        // Create spec-type-aware prompt builder
+        let prompt_builder = PromptBuilder::for_spec(spec);
+        let spec_type = prompt_builder.spec_type();
+
         if self.config.verbose {
             println!("Generating implementation for: {}", spec.name);
+            println!("Spec type: {:?}", spec_type);
             println!("Invariants: {}", spec.format_invariants());
             println!();
         }
@@ -179,10 +179,11 @@ impl CodeGenerator {
             let code = if let Some(ref prev_code) = current_code {
                 // Fix based on previous failure
                 let last_result = attempt_history.last().map(|r: &AttemptRecord| &r.cascade_result);
-                self.fix_code(spec, prev_code, last_result).await?
+                self.fix_code(&prompt_builder, spec, prev_code, last_result)
+                    .await?
             } else {
                 // Initial generation
-                self.generate_initial(spec).await?
+                self.generate_initial(&prompt_builder, spec).await?
             };
 
             if self.config.verbose {
@@ -190,7 +191,7 @@ impl CodeGenerator {
             }
 
             // Verify with cascade
-            let cascade_result = self.verify_code(&code).await?;
+            let cascade_result = self.verify_code(&code, spec_type).await?;
 
             let attempt_record = AttemptRecord {
                 attempt,
@@ -241,9 +242,13 @@ impl CodeGenerator {
     }
 
     /// Generate initial implementation.
-    async fn generate_initial(&self, spec: &TlaSpec) -> Result<String, GeneratorError> {
-        let prompt = self.prompt_builder.build_generation_prompt(spec);
-        let system = self.prompt_builder.system_prompt().to_string();
+    async fn generate_initial(
+        &self,
+        prompt_builder: &PromptBuilder,
+        spec: &TlaSpec,
+    ) -> Result<String, GeneratorError> {
+        let prompt = prompt_builder.build_generation_prompt(spec);
+        let system = prompt_builder.system_prompt().to_string();
 
         let messages = vec![Message::user(prompt)];
 
@@ -260,13 +265,13 @@ impl CodeGenerator {
     /// Fix code based on verification failure.
     async fn fix_code(
         &self,
+        prompt_builder: &PromptBuilder,
         spec: &TlaSpec,
         previous_code: &str,
         previous_result: Option<&CascadeResult>,
     ) -> Result<String, GeneratorError> {
         let prompt = if let Some(result) = previous_result {
-            self.prompt_builder
-                .build_fix_prompt(spec, previous_code, result)
+            prompt_builder.build_fix_prompt(spec, previous_code, result)
         } else {
             // Fallback if no result
             format!(
@@ -275,7 +280,7 @@ impl CodeGenerator {
             )
         };
 
-        let system = self.prompt_builder.system_prompt().to_string();
+        let system = prompt_builder.system_prompt().to_string();
         let messages = vec![Message::user(prompt)];
 
         let response = self
@@ -289,11 +294,18 @@ impl CodeGenerator {
     }
 
     /// Verify code using the evaluator cascade.
-    async fn verify_code(&self, code: &str) -> Result<CascadeResult, GeneratorError> {
+    async fn verify_code(
+        &self,
+        code: &str,
+        spec_type: SpecType,
+    ) -> Result<CascadeResult, GeneratorError> {
         let cascade = EvaluatorCascade::new(self.config.cascade_config.clone());
 
-        // Create test code that exercises the implementation
-        let test_code = generate_test_code();
+        // Create test code appropriate for the spec type
+        let test_code = match spec_type {
+            SpecType::LockFree => generate_stack_test_code(),
+            SpecType::Ssi => generate_ssi_test_code(),
+        };
 
         let result = cascade.run_on_code(code, &test_code).await;
         Ok(result)
@@ -305,8 +317,8 @@ impl CodeGenerator {
     }
 }
 
-/// Generate basic test code for verification.
-fn generate_test_code() -> String {
+/// Generate test code for lock-free stacks.
+fn generate_stack_test_code() -> String {
     r#"
     #[test]
     fn test_basic_operations() {
@@ -392,6 +404,161 @@ fn generate_test_code() -> String {
     .to_string()
 }
 
+/// Generate test code for SSI implementations.
+fn generate_ssi_test_code() -> String {
+    r#"
+    #[test]
+    fn test_simple_transaction() {
+        let store = SsiStore::new();
+
+        // T1: write and commit
+        let t1 = store.begin();
+        assert!(store.write(t1, 1, 100));
+        assert!(store.commit(t1));
+
+        // T2: read committed value
+        let t2 = store.begin();
+        assert_eq!(store.read(t2, 1), Some(100));
+        assert!(store.commit(t2));
+    }
+
+    #[test]
+    fn test_snapshot_isolation() {
+        let store = SsiStore::new();
+
+        // T1: write initial value
+        let t1 = store.begin();
+        assert!(store.write(t1, 1, 100));
+        assert!(store.commit(t1));
+
+        // T2: start and read
+        let t2 = store.begin();
+        assert_eq!(store.read(t2, 1), Some(100));
+
+        // T3: update value and commit
+        let t3 = store.begin();
+        assert!(store.write(t3, 1, 200));
+        assert!(store.commit(t3));
+
+        // T2 should still see old value (snapshot isolation)
+        assert_eq!(store.read(t2, 1), Some(100));
+        assert!(store.commit(t2));
+    }
+
+    #[test]
+    fn test_dangerous_structure_abort() {
+        let store = SsiStore::new();
+
+        // Setup: Write initial values
+        let setup = store.begin();
+        store.write(setup, 1, 10);
+        store.write(setup, 2, 20);
+        store.commit(setup);
+
+        // T1 and T2: create dangerous structure (write skew pattern)
+        let t1 = store.begin();
+        let t2 = store.begin();
+
+        // T1 reads K1
+        store.read(t1, 1);
+        // T2 reads K2
+        store.read(t2, 2);
+        // T2 writes K1 (conflict with T1's read) - T1 gets out_conflict
+        store.write(t2, 1, 11);
+        store.commit(t2);
+        // T1 writes K2 (conflict with T2's read) - T1 gets in_conflict
+        store.write(t1, 2, 21);
+
+        // T1's commit should fail due to dangerous structure
+        let committed = store.commit(t1);
+        assert!(!committed, "T1 should abort due to dangerous structure");
+    }
+
+    #[test]
+    fn test_disjoint_keys_commit() {
+        let store = SsiStore::new();
+
+        // T1 and T2: write different keys concurrently
+        let t1 = store.begin();
+        let t2 = store.begin();
+
+        assert!(store.write(t1, 1, 100));
+        assert!(store.write(t2, 2, 200));
+
+        // Both should commit (no conflicts)
+        assert!(store.commit(t1));
+        assert!(store.commit(t2));
+
+        // Verify values
+        let t3 = store.begin();
+        assert_eq!(store.read(t3, 1), Some(100));
+        assert_eq!(store.read(t3, 2), Some(200));
+    }
+
+    #[test]
+    fn test_write_lock_blocking() {
+        let store = SsiStore::new();
+
+        // T1: write K1 (holds lock)
+        let t1 = store.begin();
+        assert!(store.write(t1, 1, 100));
+
+        // T2: cannot write K1 (lock held)
+        let t2 = store.begin();
+        assert!(!store.write(t2, 1, 200)); // Should fail
+
+        // T2: can write different key
+        assert!(store.write(t2, 2, 300));
+
+        // T1 commits, releases lock
+        assert!(store.commit(t1));
+        assert!(store.commit(t2));
+    }
+
+    #[test]
+    fn test_single_conflict_flag_commits() {
+        let store = SsiStore::new();
+
+        // Setup
+        let setup = store.begin();
+        store.write(setup, 1, 10);
+        store.commit(setup);
+
+        // T1 reads K1
+        let t1 = store.begin();
+        store.read(t1, 1);
+
+        // T2 writes K1 (T1 gets out_conflict, but not in_conflict)
+        let t2 = store.begin();
+        store.write(t2, 1, 20);
+        store.commit(t2);
+
+        // T1 should still be able to commit (only out_conflict, no in_conflict)
+        assert!(store.commit(t1), "T1 should commit with only out_conflict");
+    }
+
+    #[test]
+    fn test_committed_txns_tracking() {
+        let store = SsiStore::new();
+
+        let t1 = store.begin();
+        store.write(t1, 1, 100);
+        assert!(store.commit(t1));
+
+        let committed = store.committed_txns();
+        assert!(committed.contains(&t1), "T1 should be in committed set");
+
+        let t2 = store.begin();
+        store.write(t2, 2, 200);
+        store.abort(t2);
+
+        let committed = store.committed_txns();
+        assert!(!committed.contains(&t2), "T2 should NOT be in committed set");
+    }
+"#
+    .to_string()
+}
+
 /// Generator errors.
 #[derive(Debug, thiserror::Error)]
 pub enum GeneratorError {
@@ -441,9 +608,16 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_test_code() {
-        let test_code = generate_test_code();
+    fn test_generate_stack_test_code() {
+        let test_code = generate_stack_test_code();
         assert!(test_code.contains("test_basic_operations"));
         assert!(test_code.contains("test_no_lost_elements"));
+    }
+
+    #[test]
+    fn test_generate_ssi_test_code() {
+        let test_code = generate_ssi_test_code();
+        assert!(test_code.contains("test_simple_transaction"));
+        assert!(test_code.contains("test_dangerous_structure_abort"));
     }
 }

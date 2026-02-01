@@ -20,6 +20,8 @@ pub struct Counterexample {
     pub memory_issues: Vec<MemoryIssue>,
     /// DST seed for reproduction (if applicable)
     pub dst_seed: Option<u64>,
+    /// Human-readable description of the failure (invariant violations, etc.)
+    pub description: Option<String>,
 }
 
 /// Snapshot of system state at a point in time.
@@ -86,6 +88,7 @@ impl Counterexample {
             interleaving: Vec::new(),
             memory_issues: Vec::new(),
             dst_seed: None,
+            description: None,
         }
     }
 
@@ -98,7 +101,14 @@ impl Counterexample {
             interleaving: Vec::new(),
             memory_issues: Vec::new(),
             dst_seed: Some(seed),
+            description: None,
         }
+    }
+
+    /// Set the description for this counterexample.
+    pub fn with_description(mut self, description: String) -> Self {
+        self.description = Some(description);
+        self
     }
 
     /// Add a state snapshot.
@@ -140,6 +150,13 @@ impl Counterexample {
         // DST seed for reproduction
         if let Some(seed) = self.dst_seed {
             output.push_str(&format!("DST_SEED={}\n\n", seed));
+        }
+
+        // Description (invariant violations, etc.)
+        if let Some(ref desc) = self.description {
+            output.push_str("Failure: ");
+            output.push_str(desc);
+            output.push_str("\n\n");
         }
 
         // Find all threads involved

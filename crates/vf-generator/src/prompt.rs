@@ -1,9 +1,39 @@
 //! Prompt generation from TLA+ specs.
 //!
 //! Transforms TLA+ specifications into prompts that guide LLM code generation.
+//! Supports multiple spec types: lock-free stacks and SSI transactions.
 
 use vf_core::TlaSpec;
 use vf_evaluators::CascadeResult;
+
+/// Spec type determines which prompts and verification to use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpecType {
+    /// Lock-free data structures (Treiber Stack, MS Queue)
+    LockFree,
+    /// Serializable Snapshot Isolation transactions
+    Ssi,
+}
+
+impl SpecType {
+    /// Detect spec type from TLA+ spec name or content.
+    pub fn detect(spec: &TlaSpec) -> Self {
+        let name_lower = spec.name.to_lowercase();
+        let content_lower = spec.content.to_lowercase();
+
+        if name_lower.contains("ssi")
+            || name_lower.contains("snapshot")
+            || name_lower.contains("isolation")
+            || content_lower.contains("in_conflict")
+            || content_lower.contains("out_conflict")
+            || content_lower.contains("siread")
+        {
+            SpecType::Ssi
+        } else {
+            SpecType::LockFree
+        }
+    }
+}
 
 /// Template for code generation prompts.
 #[derive(Debug, Clone)]
@@ -26,22 +56,70 @@ impl Default for PromptTemplate {
     }
 }
 
+impl PromptTemplate {
+    /// Create templates for SSI specs.
+    pub fn for_ssi() -> Self {
+        Self {
+            system: SSI_SYSTEM_PROMPT.to_string(),
+            main: SSI_MAIN_PROMPT.to_string(),
+            fix: SSI_FIX_PROMPT.to_string(),
+        }
+    }
+
+    /// Create templates for lock-free specs.
+    pub fn for_lockfree() -> Self {
+        Self::default()
+    }
+
+    /// Create templates based on spec type.
+    pub fn for_spec_type(spec_type: SpecType) -> Self {
+        match spec_type {
+            SpecType::LockFree => Self::for_lockfree(),
+            SpecType::Ssi => Self::for_ssi(),
+        }
+    }
+}
+
 /// Builder for generating prompts from TLA+ specs.
 pub struct PromptBuilder {
     template: PromptTemplate,
+    spec_type: SpecType,
 }
 
 impl PromptBuilder {
-    /// Create a new prompt builder with default templates.
+    /// Create a new prompt builder with default templates (lock-free).
     pub fn new() -> Self {
         Self {
             template: PromptTemplate::default(),
+            spec_type: SpecType::LockFree,
         }
+    }
+
+    /// Create a prompt builder for a specific spec type.
+    pub fn for_spec_type(spec_type: SpecType) -> Self {
+        Self {
+            template: PromptTemplate::for_spec_type(spec_type),
+            spec_type,
+        }
+    }
+
+    /// Create a prompt builder auto-detecting type from spec.
+    pub fn for_spec(spec: &TlaSpec) -> Self {
+        let spec_type = SpecType::detect(spec);
+        Self::for_spec_type(spec_type)
     }
 
     /// Create with custom template.
     pub fn with_template(template: PromptTemplate) -> Self {
-        Self { template }
+        Self {
+            template,
+            spec_type: SpecType::LockFree,
+        }
+    }
+
+    /// Get the detected spec type.
+    pub fn spec_type(&self) -> SpecType {
+        self.spec_type
     }
 
     /// Get the system prompt.
@@ -251,6 +329,115 @@ Fix the code to pass verification. Common issues include:
 - Incorrect tracking of pushed/popped elements
 - Missing epoch::pin() guards for safe memory access
 - Not handling spurious CAS failures
+
+Analyze the error carefully and provide a corrected implementation.
+
+Return ONLY the fixed Rust code in a ```rust code block."#;
+
+// ============================================================================
+// SSI-SPECIFIC PROMPTS
+// ============================================================================
+
+/// SSI system prompt.
+const SSI_SYSTEM_PROMPT: &str = r#"You are an expert Rust systems programmer.
+
+Your task: implement Serializable Snapshot Isolation (SSI) that satisfies the provided TLA+ specification.
+
+The TLA+ spec defines the invariants. Read it carefully - it IS the correctness definition.
+Your implementation will be verified against these invariants automatically.
+
+Style requirements:
+- Use u64 for IDs, not usize
+- Include assertions (at least 2 per public function)
+- Code must be self-contained (std only, no external crates)
+
+The internal structure is up to you. Any implementation that satisfies the invariants is correct.
+
+Return ONLY the Rust code in a ```rust code block. No explanations outside the code."#;
+
+/// SSI main prompt template.
+const SSI_MAIN_PROMPT: &str = r#"Implement Serializable Snapshot Isolation (SSI) in Rust that satisfies the following TLA+ specification.
+
+## INVARIANTS TO PRESERVE
+
+{INVARIANTS}
+
+## TLA+ SPECIFICATION
+
+Constants: {CONSTANTS}
+Variables: {VARIABLES}
+
+```tla
+{TLA_CONTENT}
+```
+
+## REQUIRED API
+
+Your `SsiStore` struct MUST implement these methods with these exact signatures:
+
+```rust
+pub type TxnId = u64;
+pub type KeyId = u64;
+pub type Value = u64;
+
+impl SsiStore {{
+    pub fn new() -> Self;
+    pub fn begin(&self) -> TxnId;
+    pub fn read(&self, txn: TxnId, key: KeyId) -> Option<Value>;
+    pub fn write(&self, txn: TxnId, key: KeyId, value: Value) -> bool;
+    pub fn commit(&self, txn: TxnId) -> bool;  // false = aborted due to dangerous structure
+    pub fn abort(&self, txn: TxnId);
+    pub fn is_active(&self, txn: TxnId) -> bool;
+    pub fn committed_txns(&self) -> HashSet<TxnId>;
+    pub fn get_current_value(&self, key: KeyId) -> Option<Value>;
+    pub fn get_conflict_flags(&self, txn: TxnId) -> (bool, bool);  // (in_conflict, out_conflict)
+}}
+```
+
+## CONSTRAINTS
+
+1. Code must be SELF-CONTAINED - only `std` crate, no external dependencies
+2. Must be thread-safe (`SsiStore` should be `Send + Sync`)
+3. Use u64 for IDs and timestamps (not usize)
+4. Include at least 2 assertions per public function
+
+## FREEDOM
+
+You decide:
+- Internal data structures (how to track transactions, versions, locks)
+- Implementation strategy (single lock, fine-grained locking, lock-free)
+- How to detect and track dangerous structures
+
+The evaluator cascade only cares about correctness - if your implementation satisfies the TLA+ invariants, any internal design is valid.
+
+Generate the complete implementation. Do NOT include a tests module - tests will be added separately."#;
+
+/// SSI fix prompt template.
+const SSI_FIX_PROMPT: &str = r#"The following SSI implementation failed verification.
+
+## REQUIRED INVARIANTS
+
+{INVARIANTS}
+
+## FAILED CODE
+
+```rust
+{PREVIOUS_CODE}
+```
+
+## VERIFICATION FAILURE
+
+{ERROR_INFO}
+
+## TASK
+
+Fix the code to pass verification. Common SSI issues include:
+- Setting conflict flags on committed transactions (they should be frozen)
+- Not checking for dangerous structure at commit time
+- Missing SIREAD lock persistence after commit
+- Wrong visibility logic for snapshot reads
+- Not releasing write locks on abort
+- Incorrect conflict flag propagation during read/write
 
 Analyze the error carefully and provide a corrected implementation.
 

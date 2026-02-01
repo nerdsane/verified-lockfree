@@ -256,6 +256,7 @@ fn extract_counterexample(output: &str) -> Option<vf_core::Counterexample> {
             interleaving: Vec::new(),
             memory_issues: Vec::new(),
             dst_seed: None,
+            description: None,
         })
     }
 }

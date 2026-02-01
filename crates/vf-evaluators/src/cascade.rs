@@ -289,8 +289,9 @@ default = []
             )]);
         }
 
-        // Write lib.rs
-        let lib_content = format!("{}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n{}\n}}", code, test_code);
+        // Write lib.rs - strip any existing tests module from generated code to avoid duplicates
+        let code_without_tests = strip_tests_module(code);
+        let lib_content = format!("{}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n{}\n}}", code_without_tests, test_code);
         if let Err(e) = tokio::fs::write(src_dir.join("lib.rs"), lib_content).await {
             return CascadeResult::from_results(vec![EvaluatorResult::fail(
                 "setup",
@@ -313,6 +314,56 @@ default = []
     pub fn config(&self) -> &CascadeConfig {
         &self.config
     }
+}
+
+/// Strip any existing #[cfg(test)] mod tests { ... } block from generated code.
+///
+/// This prevents duplicate module errors when the cascade adds its own test module.
+/// Uses simple heuristics that work for well-formatted Rust code.
+fn strip_tests_module(code: &str) -> String {
+    // Look for #[cfg(test)] followed by mod tests
+    let lines: Vec<&str> = code.lines().collect();
+    let mut result = Vec::new();
+    let mut in_tests_module = false;
+    let mut brace_depth = 0;
+    let mut skip_next_mod = false;
+
+    for line in lines {
+        let trimmed = line.trim();
+
+        // Detect #[cfg(test)] attribute
+        if trimmed == "#[cfg(test)]" {
+            skip_next_mod = true;
+            continue;
+        }
+
+        // Detect mod tests { following #[cfg(test)]
+        if skip_next_mod && trimmed.starts_with("mod tests") {
+            in_tests_module = true;
+            brace_depth = 0;
+            // Count opening braces on this line
+            brace_depth += line.chars().filter(|&c| c == '{').count() as i32;
+            brace_depth -= line.chars().filter(|&c| c == '}').count() as i32;
+            skip_next_mod = false;
+            continue;
+        }
+
+        skip_next_mod = false;
+
+        // If in tests module, track brace depth
+        if in_tests_module {
+            brace_depth += line.chars().filter(|&c| c == '{').count() as i32;
+            brace_depth -= line.chars().filter(|&c| c == '}').count() as i32;
+            if brace_depth <= 0 {
+                in_tests_module = false;
+            }
+            continue;
+        }
+
+        result.push(line);
+    }
+
+    result.join("\n")
 }
 
 #[cfg(test)]
@@ -357,5 +408,47 @@ mod tests {
         assert_eq!(EvaluatorLevel::Stateright.name(), "stateright");
         assert_eq!(EvaluatorLevel::Kani.name(), "kani");
         assert_eq!(EvaluatorLevel::Verus.name(), "verus");
+    }
+
+    #[test]
+    fn test_strip_tests_module() {
+        let code = r#"
+pub struct Foo {
+    value: u32,
+}
+
+impl Foo {
+    pub fn new() -> Self {
+        Self { value: 0 }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_foo() {
+        let f = Foo::new();
+        assert_eq!(f.value, 0);
+    }
+}
+"#;
+        let stripped = strip_tests_module(code);
+        assert!(!stripped.contains("mod tests"));
+        assert!(!stripped.contains("#[cfg(test)]"));
+        assert!(stripped.contains("pub struct Foo"));
+        assert!(stripped.contains("pub fn new()"));
+    }
+
+    #[test]
+    fn test_strip_tests_module_no_tests() {
+        let code = r#"
+pub struct Bar {
+    x: i32,
+}
+"#;
+        let stripped = strip_tests_module(code);
+        assert!(stripped.contains("pub struct Bar"));
     }
 }

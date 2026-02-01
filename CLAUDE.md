@@ -183,6 +183,7 @@ cargo run -p vf-evaluators -- cascade crates/vf-examples/src/treiber_stack.rs
 
 | Mistake | Correct Behavior |
 |---------|------------------|
+| Half implementations, placeholders, TODOs | **NO PLACEHOLDERS** - all promises must be fulfilled, complete implementations only |
 | Using `tokio::time::sleep()` in DST | Use `env.clock().sleep()` |
 | Using `usize` for counts | Use `u64` for cross-platform |
 | Missing retry loop in CAS | All CAS must retry on failure |

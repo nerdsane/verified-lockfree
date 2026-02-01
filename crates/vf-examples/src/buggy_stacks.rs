@@ -139,9 +139,8 @@ impl StackProperties for MissingRetryStack {
         self.get_contents()
     }
 
-    fn history(&self) -> &StackHistory {
-        static DEFAULT: StackHistory = StackHistory { operations: Vec::new() };
-        &DEFAULT
+    fn history(&self) -> StackHistory {
+        StackHistory::new()
     }
 }
 
@@ -264,9 +263,8 @@ impl StackProperties for WrongOrderingStack {
         self.get_contents()
     }
 
-    fn history(&self) -> &StackHistory {
-        static DEFAULT: StackHistory = StackHistory { operations: Vec::new() };
-        &DEFAULT
+    fn history(&self) -> StackHistory {
+        StackHistory::new()
     }
 }
 
@@ -391,9 +389,8 @@ impl StackProperties for LostElementStack {
         self.get_contents()
     }
 
-    fn history(&self) -> &StackHistory {
-        static DEFAULT: StackHistory = StackHistory { operations: Vec::new() };
-        &DEFAULT
+    fn history(&self) -> StackHistory {
+        StackHistory::new()
     }
 }
 

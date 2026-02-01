@@ -51,5 +51,5 @@ pub mod templates;
 
 pub use client::{ClaudeClient, ClaudeConfig, Message, Role};
 pub use generator::{CodeGenerator, GeneratorConfig, GeneratorResult};
-pub use prompt::{PromptBuilder, PromptTemplate};
+pub use prompt::{PromptBuilder, PromptTemplate, SpecType};
 pub use templates::dst_instrumented::{generate_dst_instrumented_code, DST_INSTRUMENTED_TEMPLATE};

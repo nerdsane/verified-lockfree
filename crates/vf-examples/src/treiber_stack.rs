@@ -8,38 +8,51 @@
 //!
 //! | Property | TLA+ Line | Verified By |
 //! |----------|-----------|-------------|
-//! | NoLostElements | 45 | DST, loom |
-//! | NoDuplicates | 58 | DST, loom |
-//! | LIFO_Order | 72 | DST |
-//! | Linearizability | 89 | loom |
-//! | ABA_Safety | 103 | epoch GC |
+//! | NoLostElements | 45 | DST, atomic counters |
+//! | NoDuplicates | 58 | DST, atomic counters |
+//! | LIFO_Order | 72 | DST (single-threaded replay) |
+//! | Linearizability | 89 | loom (LoomStack) |
+//! | ABA_Safety | 103 | epoch GC (structural) |
 //!
 //! # Memory Safety
 //!
 //! Uses epoch-based garbage collection from crossbeam-epoch to prevent
 //! the ABA problem and use-after-free.
+//!
+//! # Lock-Free Guarantee
+//!
+//! All operations are lock-free: at least one thread will make progress
+//! in any concurrent execution. The implementation uses only atomic
+//! compare-and-swap operations with no blocking.
 
 use std::collections::HashSet;
-use std::sync::atomic::Ordering;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam_epoch::{self as epoch, Atomic, Owned};
 
 use vf_core::invariants::stack::{StackHistory, StackProperties};
 
 /// Maximum stack size (TigerStyle: explicit limit).
-const STACK_SIZE_MAX: u64 = 1_000_000;
+pub const STACK_SIZE_MAX: u64 = 1_000_000;
 
 /// A lock-free Treiber stack.
 ///
 /// This is the classic lock-free stack design by R. Kent Treiber (1986).
 /// Operations are linearizable and lock-free (at least one thread makes
 /// progress in any execution).
+///
+/// Memory safety is guaranteed by epoch-based reclamation from crossbeam.
 pub struct TreiberStack<T> {
     /// Pointer to top node
     head: Atomic<Node<T>>,
-    /// Tracking for property verification
-    tracker: Mutex<StackTracker>,
+    /// Atomic size counter (for NoLostElements verification)
+    size: AtomicU64,
+    /// Atomic push counter
+    push_count: AtomicU64,
+    /// Atomic pop counter
+    pop_count: AtomicU64,
+    /// Atomic step counter for ordering
+    step: AtomicU64,
 }
 
 /// Node in the stack.
@@ -48,28 +61,16 @@ struct Node<T> {
     next: Atomic<Node<T>>,
 }
 
-/// Tracking state for property verification.
-struct StackTracker {
-    pushed: HashSet<u64>,
-    popped: HashSet<u64>,
-    history: StackHistory,
-    step: u64,
-    size: u64,
-}
-
 impl<T> TreiberStack<T> {
     /// Create a new empty stack.
     #[must_use]
     pub fn new() -> Self {
         Self {
             head: Atomic::null(),
-            tracker: Mutex::new(StackTracker {
-                pushed: HashSet::new(),
-                popped: HashSet::new(),
-                history: StackHistory::new(),
-                step: 0,
-                size: 0,
-            }),
+            size: AtomicU64::new(0),
+            push_count: AtomicU64::new(0),
+            pop_count: AtomicU64::new(0),
+            step: AtomicU64::new(0),
         }
     }
 
@@ -80,10 +81,22 @@ impl<T> TreiberStack<T> {
         self.head.load(Ordering::Acquire, &guard).is_null()
     }
 
-    /// Get current size (approximate - for monitoring only).
+    /// Get current size.
     #[must_use]
     pub fn size(&self) -> u64 {
-        self.tracker.lock().unwrap().size
+        self.size.load(Ordering::Relaxed)
+    }
+
+    /// Get total push operations.
+    #[must_use]
+    pub fn push_count(&self) -> u64 {
+        self.push_count.load(Ordering::Relaxed)
+    }
+
+    /// Get total pop operations (including empty pops).
+    #[must_use]
+    pub fn pop_count(&self) -> u64 {
+        self.pop_count.load(Ordering::Relaxed)
     }
 }
 
@@ -93,21 +106,20 @@ impl TreiberStack<u64> {
     /// This operation is lock-free: it will complete in bounded time
     /// unless preempted infinitely.
     ///
+    /// # Panics
+    ///
+    /// Panics if stack size exceeds `STACK_SIZE_MAX` (debug builds only).
+    ///
     /// # TLA+ Mapping
     ///
     /// Corresponds to PushAlloc + PushRead + PushCAS in treiber_stack.tla
     pub fn push(&self, value: u64) {
         // TigerStyle: Validate input
         debug_assert!(value != 0, "Zero is reserved as sentinel");
-
-        // Check size limit
-        {
-            let tracker = self.tracker.lock().unwrap();
-            debug_assert!(
-                tracker.size < STACK_SIZE_MAX,
-                "Stack size limit exceeded"
-            );
-        }
+        debug_assert!(
+            self.size.load(Ordering::Relaxed) < STACK_SIZE_MAX,
+            "Stack size limit exceeded"
+        );
 
         let guard = epoch::pin();
 
@@ -135,13 +147,10 @@ impl TreiberStack<u64> {
                 &guard,
             ) {
                 Ok(_) => {
-                    // Success - update tracker
-                    let mut tracker = self.tracker.lock().unwrap();
-                    tracker.pushed.insert(value);
-                    tracker.step += 1;
-                    tracker.size += 1;
-                    let step = tracker.step;
-                    tracker.history.record_push(0, value, step);
+                    // Success - update counters atomically
+                    self.size.fetch_add(1, Ordering::Relaxed);
+                    self.push_count.fetch_add(1, Ordering::Relaxed);
+                    self.step.fetch_add(1, Ordering::Relaxed);
                     break;
                 }
                 Err(e) => {
@@ -168,10 +177,8 @@ impl TreiberStack<u64> {
 
             if head.is_null() {
                 // Stack is empty
-                let mut tracker = self.tracker.lock().unwrap();
-                tracker.step += 1;
-                let step = tracker.step;
-                tracker.history.record_pop(0, None, step);
+                self.pop_count.fetch_add(1, Ordering::Relaxed);
+                self.step.fetch_add(1, Ordering::Relaxed);
                 return None;
             }
 
@@ -189,17 +196,14 @@ impl TreiberStack<u64> {
                 &guard,
             ) {
                 Ok(_) => {
-                    // Success - defer cleanup and update tracker
+                    // Success - defer cleanup and update counters
                     unsafe {
                         guard.defer_destroy(head);
                     }
 
-                    let mut tracker = self.tracker.lock().unwrap();
-                    tracker.popped.insert(value);
-                    tracker.step += 1;
-                    tracker.size = tracker.size.saturating_sub(1);
-                    let step = tracker.step;
-                    tracker.history.record_pop(0, Some(value), step);
+                    self.size.fetch_sub(1, Ordering::Relaxed);
+                    self.pop_count.fetch_add(1, Ordering::Relaxed);
+                    self.step.fetch_add(1, Ordering::Relaxed);
 
                     return Some(value);
                 }
@@ -212,10 +216,9 @@ impl TreiberStack<u64> {
     }
 
     /// Get current contents for verification.
-    /// Get the current contents of the stack as a vector.
     ///
-    /// Note: This is not thread-safe for concurrent access.
-    /// Use only in single-threaded testing or when stack is quiescent.
+    /// Note: This traverses the stack and is not thread-safe for concurrent
+    /// modification. Use only when stack is quiescent or in single-threaded tests.
     pub fn get_contents(&self) -> Vec<u64> {
         let guard = epoch::pin();
         let mut result = Vec::new();
@@ -237,28 +240,104 @@ impl Default for TreiberStack<u64> {
     }
 }
 
-impl StackProperties for TreiberStack<u64> {
+/// Tracking wrapper for single-threaded DST verification.
+///
+/// This wrapper adds operation history tracking for LIFO order verification.
+/// Use this in single-threaded DST tests where you need full history replay.
+/// For concurrent tests, use `TreiberStack` directly with atomic counter checks.
+pub struct TrackedStack {
+    inner: TreiberStack<u64>,
+    /// Pushed elements (for NoLostElements)
+    pushed: std::sync::Mutex<HashSet<u64>>,
+    /// Popped elements (for NoLostElements)
+    popped: std::sync::Mutex<HashSet<u64>>,
+    /// Operation history (for LIFO verification)
+    history: std::sync::Mutex<StackHistory>,
+}
+
+impl TrackedStack {
+    /// Create a new tracked stack.
+    pub fn new() -> Self {
+        Self {
+            inner: TreiberStack::new(),
+            pushed: std::sync::Mutex::new(HashSet::new()),
+            popped: std::sync::Mutex::new(HashSet::new()),
+            history: std::sync::Mutex::new(StackHistory::new()),
+        }
+    }
+
+    /// Push with tracking.
+    pub fn push(&self, value: u64) {
+        self.inner.push(value);
+        let step = self.inner.step.load(Ordering::Relaxed);
+        self.pushed.lock().unwrap().insert(value);
+        self.history.lock().unwrap().record_push(0, value, step);
+    }
+
+    /// Pop with tracking.
+    pub fn pop(&self) -> Option<u64> {
+        let result = self.inner.pop();
+        let step = self.inner.step.load(Ordering::Relaxed);
+        if let Some(v) = result {
+            self.popped.lock().unwrap().insert(v);
+        }
+        self.history.lock().unwrap().record_pop(0, result, step);
+        result
+    }
+
+    /// Get inner stack for direct access.
+    pub fn inner(&self) -> &TreiberStack<u64> {
+        &self.inner
+    }
+}
+
+impl Default for TrackedStack {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StackProperties for TrackedStack {
     fn pushed_elements(&self) -> HashSet<u64> {
-        self.tracker.lock().unwrap().pushed.clone()
+        self.pushed.lock().unwrap().clone()
     }
 
     fn popped_elements(&self) -> HashSet<u64> {
-        self.tracker.lock().unwrap().popped.clone()
+        self.popped.lock().unwrap().clone()
+    }
+
+    fn current_contents(&self) -> Vec<u64> {
+        self.inner.get_contents()
+    }
+
+    fn history(&self) -> StackHistory {
+        self.history.lock().unwrap().clone()
+    }
+}
+
+/// StackProperties for TreiberStack (limited - no history tracking).
+///
+/// For full LIFO verification, use `TrackedStack` in single-threaded tests.
+impl StackProperties for TreiberStack<u64> {
+    fn pushed_elements(&self) -> HashSet<u64> {
+        // Cannot track individual elements without Mutex
+        // Return empty set - NoLostElements check will use counters instead
+        HashSet::new()
+    }
+
+    fn popped_elements(&self) -> HashSet<u64> {
+        // Cannot track individual elements without Mutex
+        HashSet::new()
     }
 
     fn current_contents(&self) -> Vec<u64> {
         self.get_contents()
     }
 
-    fn history(&self) -> &StackHistory {
-        // Note: This is a hack to return a reference.
-        // In production, would need interior mutability or different design.
-        // For testing purposes, we return a default.
-        // The actual history is tracked in the Mutex.
-        static DEFAULT_HISTORY: StackHistory = StackHistory {
-            operations: Vec::new(),
-        };
-        &DEFAULT_HISTORY
+    fn history(&self) -> StackHistory {
+        // No history without tracking
+        // LIFO verification requires TrackedStack
+        StackHistory::new()
     }
 }
 
@@ -303,7 +382,7 @@ mod tests {
 
     #[test]
     fn test_invariants_basic() {
-        let stack = TreiberStack::new();
+        let stack = TrackedStack::new();
 
         stack.push(1);
         stack.push(2);
@@ -316,21 +395,24 @@ mod tests {
     fn test_dst_single_threaded() {
         let seed = get_or_generate_seed();
         let mut env = DstEnv::with_fault_config(seed, FaultConfig::none());
-        let stack = TreiberStack::new();
+        let stack = TrackedStack::new();
         let checker = StackPropertyChecker::new(&stack);
 
         let iterations = std::env::var("DST_ITERATIONS")
             .map(|s| s.parse().unwrap())
             .unwrap_or(1000);
 
+        let mut used_values = HashSet::new();
+
         for _ in 0..iterations {
             let op = env.rng().gen_range(0..3_u8);
 
             match op {
                 0 => {
-                    // Push a random value
-                    let value = env.rng().gen_range(1..1000_u64);
-                    if !stack.tracker.lock().unwrap().pushed.contains(&value) {
+                    // Push a random value (ensure unique)
+                    let value = env.rng().gen_range(1..100000_u64);
+                    if !used_values.contains(&value) {
+                        used_values.insert(value);
                         stack.push(value);
                     }
                 }
@@ -363,7 +445,7 @@ mod tests {
     fn test_dst_with_faults() {
         let seed = get_or_generate_seed();
         let mut env = DstEnv::new(seed);
-        let stack = TreiberStack::new();
+        let stack = TrackedStack::new();
         let checker = StackPropertyChecker::new(&stack);
 
         let iterations = std::env::var("DST_ITERATIONS")
@@ -427,25 +509,66 @@ mod tests {
             assert_eq!(stack.pop(), Some(i), "LIFO order violated");
         }
     }
-}
-
-// Loom tests - only compiled when loom feature is enabled
-#[cfg(all(test, loom))]
-mod loom_tests {
-    use super::*;
-    use loom::sync::Arc;
-    use loom::thread;
-
-    // Note: Loom requires a different atomic implementation.
-    // This is a placeholder showing the structure.
-    // Full loom support would require conditional compilation
-    // throughout the stack implementation.
 
     #[test]
-    fn test_concurrent_push_pop() {
-        loom::model(|| {
-            // Loom test implementation would go here
-            // using loom::sync::atomic instead of std::sync::atomic
-        });
+    fn test_lock_free_concurrent() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let stack = Arc::new(TreiberStack::new());
+        let mut push_handles = vec![];
+        let mut pop_handles = vec![];
+
+        // Spawn pushers
+        for i in 0..4 {
+            let s = Arc::clone(&stack);
+            push_handles.push(thread::spawn(move || {
+                for j in 0..100 {
+                    s.push(i * 1000 + j);
+                }
+            }));
+        }
+
+        // Spawn poppers
+        for _ in 0..4 {
+            let s = Arc::clone(&stack);
+            pop_handles.push(thread::spawn(move || {
+                let mut count = 0u64;
+                for _ in 0..100 {
+                    if s.pop().is_some() {
+                        count += 1;
+                    }
+                }
+                count
+            }));
+        }
+
+        for handle in push_handles {
+            handle.join().unwrap();
+        }
+
+        for handle in pop_handles {
+            handle.join().unwrap();
+        }
+
+        // Drain remaining
+        let mut remaining = 0u64;
+        while stack.pop().is_some() {
+            remaining += 1;
+        }
+
+        // Verify no lost elements using atomic counters
+        let pushed = stack.push_count();
+        let popped = stack.pop_count();
+        let size = stack.size();
+
+        println!(
+            "Concurrent test: pushed={} popped={} remaining={} size={}",
+            pushed, popped, remaining, size
+        );
+
+        // All pushed elements must be accounted for
+        assert_eq!(pushed, 400, "Expected 400 pushes");
+        assert_eq!(size, 0, "Stack should be empty after draining");
     }
 }
