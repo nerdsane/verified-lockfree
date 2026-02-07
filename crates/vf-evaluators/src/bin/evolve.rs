@@ -156,24 +156,24 @@ impl LlmModel {
 fn default_ensemble() -> Vec<LlmModel> {
     vec![
         LlmModel::new(
-            "claude-opus-4-20250514",
-            "opus",
-            Some(0.7), // Opus: highest quality, lower temp for precision
+            "claude-opus-4-6",
+            "opus-4.6",
+            Some(0.7), // Opus 4.6: most capable, lower temp for precision
         ),
         LlmModel::new(
-            "claude-sonnet-4-20250514",
-            "sonnet",
-            None, // Sonnet: fast + capable, default temp
+            "claude-sonnet-4-5-20250929",
+            "sonnet-4.5",
+            None, // Sonnet 4.5: fast + capable, default temp
         ),
         LlmModel::new(
             "claude-haiku-4-5-20251001",
-            "haiku",
-            Some(1.0), // Haiku: cheapest, high temp for maximum diversity
+            "haiku-4.5",
+            Some(1.0), // Haiku 4.5: cheapest, high temp for maximum diversity
         ),
         LlmModel::new(
-            "claude-sonnet-4-20250514",
-            "sonnet-hot",
-            Some(1.0), // Sonnet with high temp for exploration
+            "claude-opus-4-6",
+            "opus-4.6-hot",
+            Some(1.0), // Opus 4.6 with high temp for exploration
         ),
     ]
 }

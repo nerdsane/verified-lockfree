@@ -1,0 +1,382 @@
+[
+  {
+    "generation": 1,
+    "best_score": 220.0,
+    "best_progress": "Blocking",
+    "best_model": "seed",
+    "island_bests": [
+      220.0,
+      220.0
+    ],
+    "evaluations": 3,
+    "duration_secs": 144.434645875,
+    "model_stats": [
+      {
+        "label": "opus",
+        "evals": 1,
+        "avg_score": 160.0,
+        "best_score": 160.0
+      },
+      {
+        "label": "sonnet",
+        "evals": 1,
+        "avg_score": 50.0,
+        "best_score": 50.0
+      },
+      {
+        "label": "haiku",
+        "evals": 0,
+        "avg_score": 0.0,
+        "best_score": 0.0
+      },
+      {
+        "label": "sonnet-hot",
+        "evals": 0,
+        "avg_score": 0.0,
+        "best_score": 0.0
+      }
+    ]
+  },
+  {
+    "generation": 2,
+    "best_score": 220.0,
+    "best_progress": "Blocking",
+    "best_model": "seed",
+    "island_bests": [
+      220.0,
+      220.0
+    ],
+    "evaluations": 5,
+    "duration_secs": 83.807818125,
+    "model_stats": [
+      {
+        "label": "opus",
+        "evals": 2,
+        "avg_score": 105.0,
+        "best_score": 160.0
+      },
+      {
+        "label": "sonnet",
+        "evals": 2,
+        "avg_score": 50.0,
+        "best_score": 50.0
+      },
+      {
+        "label": "haiku",
+        "evals": 0,
+        "avg_score": 0.0,
+        "best_score": 0.0
+      },
+      {
+        "label": "sonnet-hot",
+        "evals": 0,
+        "avg_score": 0.0,
+        "best_score": 0.0
+      }
+    ]
+  },
+  {
+    "generation": 3,
+    "best_score": 220.0,
+    "best_progress": "Blocking",
+    "best_model": "seed",
+    "island_bests": [
+      220.0,
+      220.0
+    ],
+    "evaluations": 7,
+    "duration_secs": 189.306129667,
+    "model_stats": [
+      {
+        "label": "opus",
+        "evals": 3,
+        "avg_score": 123.33333333333333,
+        "best_score": 160.0
+      },
+      {
+        "label": "sonnet",
+        "evals": 3,
+        "avg_score": 86.66666666666667,
+        "best_score": 160.0
+      },
+      {
+        "label": "haiku",
+        "evals": 0,
+        "avg_score": 0.0,
+        "best_score": 0.0
+      },
+      {
+        "label": "sonnet-hot",
+        "evals": 0,
+        "avg_score": 0.0,
+        "best_score": 0.0
+      }
+    ]
+  },
+  {
+    "generation": 4,
+    "best_score": 220.0,
+    "best_progress": "Blocking",
+    "best_model": "seed",
+    "island_bests": [
+      220.0,
+      220.0
+    ],
+    "evaluations": 9,
+    "duration_secs": 140.610292,
+    "model_stats": [
+      {
+        "label": "opus",
+        "evals": 4,
+        "avg_score": 132.5,
+        "best_score": 160.0
+      },
+      {
+        "label": "sonnet",
+        "evals": 4,
+        "avg_score": 77.5,
+        "best_score": 160.0
+      },
+      {
+        "label": "haiku",
+        "evals": 0,
+        "avg_score": 0.0,
+        "best_score": 0.0
+      },
+      {
+        "label": "sonnet-hot",
+        "evals": 0,
+        "avg_score": 0.0,
+        "best_score": 0.0
+      }
+    ]
+  },
+  {
+    "generation": 5,
+    "best_score": 220.0,
+    "best_progress": "Blocking",
+    "best_model": "seed",
+    "island_bests": [
+      220.0,
+      220.0
+    ],
+    "evaluations": 11,
+    "duration_secs": 73.837810167,
+    "model_stats": [
+      {
+        "label": "opus",
+        "evals": 4,
+        "avg_score": 132.5,
+        "best_score": 160.0
+      },
+      {
+        "label": "sonnet",
+        "evals": 5,
+        "avg_score": 72.0,
+        "best_score": 160.0
+      },
+      {
+        "label": "haiku",
+        "evals": 0,
+        "avg_score": 0.0,
+        "best_score": 0.0
+      },
+      {
+        "label": "sonnet-hot",
+        "evals": 1,
+        "avg_score": 50.0,
+        "best_score": 50.0
+      }
+    ]
+  },
+  {
+    "generation": 6,
+    "best_score": 220.0,
+    "best_progress": "Blocking",
+    "best_model": "seed",
+    "island_bests": [
+      220.0,
+      220.0
+    ],
+    "evaluations": 13,
+    "duration_secs": 68.67942225,
+    "model_stats": [
+      {
+        "label": "opus",
+        "evals": 4,
+        "avg_score": 132.5,
+        "best_score": 160.0
+      },
+      {
+        "label": "sonnet",
+        "evals": 6,
+        "avg_score": 68.33333333333333,
+        "best_score": 160.0
+      },
+      {
+        "label": "haiku",
+        "evals": 1,
+        "avg_score": 50.0,
+        "best_score": 50.0
+      },
+      {
+        "label": "sonnet-hot",
+        "evals": 1,
+        "avg_score": 50.0,
+        "best_score": 50.0
+      }
+    ]
+  },
+  {
+    "generation": 7,
+    "best_score": 220.0,
+    "best_progress": "Blocking",
+    "best_model": "seed",
+    "island_bests": [
+      220.0,
+      220.0
+    ],
+    "evaluations": 15,
+    "duration_secs": 80.18894375,
+    "model_stats": [
+      {
+        "label": "opus",
+        "evals": 4,
+        "avg_score": 132.5,
+        "best_score": 160.0
+      },
+      {
+        "label": "sonnet",
+        "evals": 6,
+        "avg_score": 68.33333333333333,
+        "best_score": 160.0
+      },
+      {
+        "label": "haiku",
+        "evals": 2,
+        "avg_score": 50.0,
+        "best_score": 50.0
+      },
+      {
+        "label": "sonnet-hot",
+        "evals": 2,
+        "avg_score": 50.0,
+        "best_score": 50.0
+      }
+    ]
+  },
+  {
+    "generation": 8,
+    "best_score": 220.0,
+    "best_progress": "Blocking",
+    "best_model": "seed",
+    "island_bests": [
+      220.0,
+      220.0
+    ],
+    "evaluations": 17,
+    "duration_secs": 205.985500042,
+    "model_stats": [
+      {
+        "label": "opus",
+        "evals": 6,
+        "avg_score": 141.66666666666666,
+        "best_score": 160.0
+      },
+      {
+        "label": "sonnet",
+        "evals": 6,
+        "avg_score": 68.33333333333333,
+        "best_score": 160.0
+      },
+      {
+        "label": "haiku",
+        "evals": 2,
+        "avg_score": 50.0,
+        "best_score": 50.0
+      },
+      {
+        "label": "sonnet-hot",
+        "evals": 2,
+        "avg_score": 50.0,
+        "best_score": 50.0
+      }
+    ]
+  },
+  {
+    "generation": 9,
+    "best_score": 220.0,
+    "best_progress": "Blocking",
+    "best_model": "seed",
+    "island_bests": [
+      220.0,
+      220.0
+    ],
+    "evaluations": 19,
+    "duration_secs": 206.244225667,
+    "model_stats": [
+      {
+        "label": "opus",
+        "evals": 8,
+        "avg_score": 146.25,
+        "best_score": 160.0
+      },
+      {
+        "label": "sonnet",
+        "evals": 6,
+        "avg_score": 68.33333333333333,
+        "best_score": 160.0
+      },
+      {
+        "label": "haiku",
+        "evals": 2,
+        "avg_score": 50.0,
+        "best_score": 50.0
+      },
+      {
+        "label": "sonnet-hot",
+        "evals": 2,
+        "avg_score": 50.0,
+        "best_score": 50.0
+      }
+    ]
+  },
+  {
+    "generation": 10,
+    "best_score": 220.0,
+    "best_progress": "Blocking",
+    "best_model": "seed",
+    "island_bests": [
+      220.0,
+      220.0
+    ],
+    "evaluations": 21,
+    "duration_secs": 125.951095917,
+    "model_stats": [
+      {
+        "label": "opus",
+        "evals": 9,
+        "avg_score": 147.77777777777777,
+        "best_score": 160.0
+      },
+      {
+        "label": "sonnet",
+        "evals": 7,
+        "avg_score": 65.71428571428571,
+        "best_score": 160.0
+      },
+      {
+        "label": "haiku",
+        "evals": 2,
+        "avg_score": 50.0,
+        "best_score": 50.0
+      },
+      {
+        "label": "sonnet-hot",
+        "evals": 2,
+        "avg_score": 50.0,
+        "best_score": 50.0
+      }
+    ]
+  }
+]
