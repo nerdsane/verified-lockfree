@@ -1,0 +1,44 @@
+# Transaction Scheduling Optimization
+# ADRS problem: minimize makespan while respecting dependencies and resource capacity.
+problem:
+  name: transaction_scheduling
+  type: optimization
+  language: python
+  category: adrs
+
+objective:
+  minimize: makespan
+  description: >
+    Total time to complete all transactions. Lower is better.
+    Measured as max(completion_time) across all transactions.
+
+constraints:
+  - name: all_transactions_complete
+    description: Every transaction must be scheduled and run to completion.
+    hard: true
+  - name: dependency_order_preserved
+    description: >
+      If transaction A depends on transaction B, then A must start
+      after B completes.
+    hard: true
+  - name: resource_capacity_respected
+    description: >
+      At any time t, the number of transactions using resource r
+      must not exceed the capacity of r.
+    hard: true
+  - name: no_starvation
+    description: No transaction waits indefinitely.
+    hard: false
+
+parameters:
+  num_transactions: [100, 1000, 10000]
+  num_resources: [4, 8, 16]
+  conflict_rate: [0.1, 0.3, 0.5]
+  max_dependency_depth: [3, 5, 10]
+
+scoring:
+  # Score = 1000 * (1 - makespan / theoretical_lower_bound)
+  # Clamped to [0, 1000]
+  normalization: theoretical_lower_bound
+
+simulator: lib.adrs_evaluators.TxnSchedulingSim

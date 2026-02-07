@@ -1,0 +1,38 @@
+# Expert-Parallel Load Balancing (EPLB)
+# ADRS problem: minimize max load across GPUs for MoE models.
+problem:
+  name: expert_parallel_load_balancing
+  type: optimization
+  language: python
+  category: adrs
+
+objective:
+  minimize: max_load_imbalance
+  description: >
+    Minimize the maximum load across all GPUs. Load = sum of tokens
+    routed to experts assigned to that GPU. Lower imbalance is better.
+
+constraints:
+  - name: capacity_constraint
+    description: >
+      Each GPU can handle at most capacity_factor * (total_tokens / num_gpus) tokens.
+    hard: true
+  - name: routing_completeness
+    description: Every token must be routed to at least one expert.
+    hard: true
+  - name: expert_assignment
+    description: >
+      Each expert is assigned to exactly one GPU (no replication in base case).
+    hard: true
+
+parameters:
+  num_experts: [8, 16, 64, 128]
+  num_gpus: [4, 8, 16]
+  tokens_per_batch: [1024, 4096, 16384]
+  top_k: [1, 2, 4]
+  capacity_factor: [1.0, 1.25, 1.5]
+
+scoring:
+  normalization: uniform_distribution_bound
+
+simulator: lib.adrs_evaluators.LoadBalancingSim

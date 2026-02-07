@@ -1,0 +1,45 @@
+# TCP Congestion Control Algorithm
+# ADRS problem: maximize throughput while minimizing latency and maintaining fairness.
+problem:
+  name: tcp_congestion_control
+  type: optimization
+  language: python
+  category: adrs
+
+objective:
+  maximize: throughput_latency_ratio
+  description: >
+    Composite metric: throughput / (latency * jitter_penalty).
+    Higher is better. Measures network utilization efficiency.
+
+constraints:
+  - name: buffer_bounds
+    description: >
+      Send window and receive buffer never exceed configured maximum.
+    hard: true
+  - name: fairness
+    description: >
+      Jain's fairness index across competing flows must be >= 0.9.
+      No single flow dominates bandwidth.
+    hard: true
+  - name: no_congestion_collapse
+    description: >
+      Total throughput must not drop below 50% of link capacity
+      under sustained load.
+    hard: true
+  - name: convergence
+    description: >
+      Algorithm must reach steady-state within 100 RTTs of startup.
+    hard: false
+
+parameters:
+  num_flows: [2, 5, 10, 50]
+  link_capacity_mbps: [10, 100, 1000]
+  base_rtt_ms: [10, 50, 200]
+  loss_rate: [0.001, 0.01, 0.05]
+  buffer_size_packets: [50, 200, 1000]
+
+scoring:
+  normalization: link_capacity_bound
+
+simulator: lib.adrs_evaluators.TcpCongestionSim

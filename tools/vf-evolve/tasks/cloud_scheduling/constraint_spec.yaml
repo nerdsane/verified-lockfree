@@ -1,0 +1,46 @@
+# Cloud Batch Scheduling (CBL)
+# ADRS problem: minimize cost of running batch jobs with SLA deadlines.
+problem:
+  name: cloud_batch_scheduling
+  type: optimization
+  language: python
+  category: adrs
+
+objective:
+  minimize: total_cost
+  description: >
+    Total dollar cost of compute resources used. Includes on-demand,
+    spot, and reserved instance pricing. Lower is better.
+
+constraints:
+  - name: sla_deadlines
+    description: >
+      Every job must complete before its deadline. Deadline violations
+      incur a large penalty (10x job cost).
+    hard: true
+  - name: spot_availability
+    description: >
+      Spot instances may be preempted. Algorithm must handle preemption
+      by rescheduling on alternative resources.
+    hard: true
+  - name: resource_limits
+    description: >
+      Total instances of each type cannot exceed account limits.
+    hard: true
+  - name: data_locality
+    description: >
+      Prefer scheduling jobs near their data. Cross-region transfer
+      adds latency and cost.
+    hard: false
+
+parameters:
+  num_jobs: [50, 200, 1000]
+  num_instance_types: [5, 10, 20]
+  num_regions: [3, 5]
+  spot_preemption_rate: [0.05, 0.15, 0.30]
+  deadline_tightness: [0.5, 1.0, 2.0]  # relative to min completion time
+
+scoring:
+  normalization: all_on_demand_cost
+
+simulator: lib.adrs_evaluators.CloudSchedulingSim

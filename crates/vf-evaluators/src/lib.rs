@@ -16,6 +16,7 @@
 //!
 //! The cascade stops at the first failure, providing a counterexample.
 
+pub mod adrs;
 pub mod cascade;
 pub mod level0_rustc;
 pub mod level1_miri;

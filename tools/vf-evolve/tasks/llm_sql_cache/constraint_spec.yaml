@@ -1,0 +1,42 @@
+# LLM-SQL Prefix Cache Optimization
+# ADRS problem: maximize cache hit rate for LLM KV-cache with SQL query prefixes.
+problem:
+  name: llm_sql_prefix_cache
+  type: optimization
+  language: python
+  category: adrs
+
+objective:
+  maximize: cache_hit_rate
+  description: >
+    Fraction of incoming queries that find a usable prefix in the KV-cache.
+    Higher is better. A hit avoids recomputing the prefix's KV states.
+
+constraints:
+  - name: memory_budget
+    description: >
+      Total KV-cache memory must not exceed the configured budget.
+      Each cached prefix consumes memory proportional to its token count.
+    hard: true
+  - name: query_compatibility
+    description: >
+      A cached prefix is only usable if it is a true prefix of the
+      incoming query's token sequence. Partial matches are invalid.
+    hard: true
+  - name: eviction_consistency
+    description: >
+      Evicted entries must be fully removed. No dangling references
+      to evicted prefixes.
+    hard: true
+
+parameters:
+  num_queries: [1000, 10000, 100000]
+  distinct_prefixes: [50, 200, 1000]
+  memory_budget_gb: [4, 16, 64]
+  avg_prefix_tokens: [128, 512, 2048]
+  zipf_alpha: [0.8, 1.0, 1.2]  # query popularity distribution
+
+scoring:
+  normalization: oracle_hit_rate
+
+simulator: lib.adrs_evaluators.LlmSqlCacheSim

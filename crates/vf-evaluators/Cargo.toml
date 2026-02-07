@@ -9,7 +9,9 @@ rust-version.workspace = true
 [dependencies]
 vf-core.workspace = true
 vf-dst.workspace = true
+vf-perf.workspace = true
 
+clap = { workspace = true, optional = true }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["process", "time", "fs", "io-util", "rt-multi-thread", "macros"] }
 serde.workspace = true
@@ -18,5 +20,21 @@ rand.workspace = true
 stateright.workspace = true
 num_cpus.workspace = true
 tempfile.workspace = true
+reqwest = { workspace = true, optional = true }
+
+[features]
+default = []
+cli = ["clap"]
+evolve = ["cli", "reqwest"]
+
+[[bin]]
+name = "vf-cascade-runner"
+path = "src/bin/cascade_runner.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "vf-evolve"
+path = "src/bin/evolve.rs"
+required-features = ["evolve"]
 
 [dev-dependencies]

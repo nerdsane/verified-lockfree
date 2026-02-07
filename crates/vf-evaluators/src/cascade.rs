@@ -245,6 +245,131 @@ impl EvaluatorCascade {
         CascadeResult::from_results(results)
     }
 
+    /// Run the cascade on source code, starting from a specific level.
+    ///
+    /// Levels below `start_level` are marked as passed (skipped) without
+    /// running. This is used for adaptive cascade when checkpoints indicate
+    /// lower levels already pass.
+    pub async fn run_on_code_from_level(
+        &self,
+        code: &str,
+        test_code: &str,
+        start_level: EvaluatorLevel,
+    ) -> CascadeResult {
+        // Create temporary directory with Cargo.toml and source
+        let temp_dir = std::env::temp_dir().join(format!("vf-cascade-{}", rand::random::<u64>()));
+        let src_dir = temp_dir.join("src");
+
+        // Create directory structure
+        if let Err(e) = tokio::fs::create_dir_all(&src_dir).await {
+            return CascadeResult::from_results(vec![EvaluatorResult::fail(
+                "setup",
+                format!("Failed to create temp directory: {}", e),
+                Duration::ZERO,
+                String::new(),
+            )]);
+        }
+
+        // Write Cargo.toml
+        let cargo_toml = Self::cargo_toml_template();
+        if let Err(e) = tokio::fs::write(temp_dir.join("Cargo.toml"), cargo_toml).await {
+            return CascadeResult::from_results(vec![EvaluatorResult::fail(
+                "setup",
+                format!("Failed to write Cargo.toml: {}", e),
+                Duration::ZERO,
+                String::new(),
+            )]);
+        }
+
+        // Write lib.rs
+        let code_without_tests = strip_tests_module(code);
+        let lib_content = format!(
+            "{}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n{}\n}}",
+            code_without_tests, test_code
+        );
+        if let Err(e) = tokio::fs::write(src_dir.join("lib.rs"), lib_content).await {
+            return CascadeResult::from_results(vec![EvaluatorResult::fail(
+                "setup",
+                format!("Failed to write lib.rs: {}", e),
+                Duration::ZERO,
+                String::new(),
+            )]);
+        }
+
+        // Run cascade with level skipping
+        let mut results = Vec::new();
+        let levels = self.config.max_level.levels_up_to();
+
+        for level in levels {
+            if level < start_level {
+                // Mark skipped levels as passed
+                results.push(EvaluatorResult::skip(
+                    level.name(),
+                    "Skipped (adaptive cascade checkpoint)",
+                    Duration::ZERO,
+                ));
+                continue;
+            }
+
+            let result = match level {
+                EvaluatorLevel::Rustc => level0_rustc::run(&temp_dir, self.config.timeout).await,
+                EvaluatorLevel::Miri => level1_miri::run(&temp_dir, self.config.timeout).await,
+                EvaluatorLevel::Loom => {
+                    level2_loom::run(&temp_dir, self.config.timeout, self.config.loom_preemption_bound).await
+                }
+                EvaluatorLevel::Dst => {
+                    level3_dst::run(
+                        &temp_dir,
+                        self.config.timeout,
+                        self.config.dst_seed,
+                        self.config.dst_iterations,
+                    )
+                    .await
+                }
+                EvaluatorLevel::Stateright => {
+                    level4_stateright::run(
+                        &temp_dir,
+                        self.config.timeout,
+                        self.config.stateright_depth_max,
+                    )
+                    .await
+                }
+                EvaluatorLevel::Kani => {
+                    level5_kani::run(&temp_dir, self.config.timeout, self.config.kani_unwind).await
+                }
+                EvaluatorLevel::Verus => {
+                    let verus_config = level6_verus::VerusConfig {
+                        timeout: self.config.timeout,
+                        threads: self.config.verus_threads,
+                        ..Default::default()
+                    };
+                    let verus_file = temp_dir.join("src").join("verify.rs");
+                    if verus_file.exists() {
+                        level6_verus::run(&verus_file, &verus_config).await
+                    } else {
+                        EvaluatorResult::skip(
+                            "verus",
+                            "No Verus proof file found (src/verify.rs)",
+                            Duration::ZERO,
+                        )
+                    }
+                }
+            };
+
+            let failed = !result.passed;
+            results.push(result);
+
+            if failed && self.config.fail_fast {
+                break;
+            }
+        }
+
+        // Cleanup
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+        CascadeResult::from_results(results)
+    }
+
     /// Run the cascade on source code directly (for generated code).
     ///
     /// Creates a temporary crate and runs the cascade on it.
@@ -264,21 +389,7 @@ impl EvaluatorCascade {
         }
 
         // Write Cargo.toml
-        let cargo_toml = r#"
-[package]
-name = "vf-temp-crate"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-crossbeam-epoch = "0.9"
-
-[dev-dependencies]
-loom = "0.7"
-
-[features]
-default = []
-"#;
+        let cargo_toml = Self::cargo_toml_template();
 
         if let Err(e) = tokio::fs::write(temp_dir.join("Cargo.toml"), cargo_toml).await {
             return CascadeResult::from_results(vec![EvaluatorResult::fail(
@@ -313,6 +424,26 @@ default = []
     /// Get the current config.
     pub fn config(&self) -> &CascadeConfig {
         &self.config
+    }
+
+    /// Cargo.toml template for temp crates.
+    fn cargo_toml_template() -> &'static str {
+        r#"
+[package]
+name = "vf-temp-crate"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+crossbeam-epoch = "0.9"
+
+[dev-dependencies]
+loom = "0.7"
+proptest = "1.4"
+
+[features]
+default = []
+"#
     }
 }
 
